@@ -140,10 +140,9 @@ private:
 	static void line(ImColor c, bool under);
 
 	//table state
-	int m_table_next_column = 0;
+	int m_tableCount;
 	ImVec2 m_table_last_pos;
-	std::vector<float> m_table_col_pos;
-	std::vector<float> m_table_row_pos;
+	std::vector<bool> m_table_is_open;
 
 	//list state
 	struct list_info

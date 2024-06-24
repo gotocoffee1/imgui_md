@@ -25,11 +25,13 @@
 
 #include "imgui_md.h"
 
+#include "imgui_internal.h"
+
 imgui_md::imgui_md()
 {
 	m_md.abi_version = 0;
 
-	m_md.flags = MD_FLAG_TABLES | MD_FLAG_UNDERLINE | MD_FLAG_STRIKETHROUGH;
+	m_md.flags = MD_FLAG_TABLES | MD_FLAG_UNDERLINE | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS;
 
 	m_md.enter_block = [](MD_BLOCKTYPE t, void* d, void* u) {
 		return ((imgui_md*)u)->block(t, d, true);
@@ -83,7 +85,7 @@ void imgui_md::BLOCK_OL(const MD_BLOCK_OL_DETAIL* d, bool e)
 	}
 }
 
-void imgui_md::BLOCK_LI(const MD_BLOCK_LI_DETAIL*, bool e)
+void imgui_md::BLOCK_LI(const MD_BLOCK_LI_DETAIL* aDetailBlockLI, bool e)
 {
 	if (e) {
 		ImGui::NewLine();
@@ -105,6 +107,13 @@ void imgui_md::BLOCK_LI(const MD_BLOCK_LI_DETAIL*, bool e)
 		}
 
 		ImGui::Indent();
+
+		if(aDetailBlockLI->is_task)	{
+			bool v=(aDetailBlockLI->task_mark=='x' || aDetailBlockLI->task_mark=='X');
+			ImGui::Checkbox("##task",&v);
+			ImGui::SameLine(0.0f,10.f);
+		}
+
 	} else {
 		ImGui::Unindent();
 	}
@@ -163,61 +172,23 @@ void imgui_md::BLOCK_P(bool)
 	ImGui::NewLine();
 }
 
-void imgui_md::BLOCK_TABLE(const MD_BLOCK_TABLE_DETAIL*, bool e)
+void imgui_md::BLOCK_TABLE(const MD_BLOCK_TABLE_DETAIL *pDetails, bool e)
 {
-	if (e) {
-		m_table_row_pos.clear();
-		m_table_col_pos.clear();
-
-		m_table_last_pos = ImGui::GetCursorPos();
-	} else {
-
-		ImGui::NewLine();
-
-		if (m_table_border) {
-
-			m_table_last_pos.y = ImGui::GetCursorPos().y;
-
-			m_table_col_pos.push_back(m_table_last_pos.x);
-			m_table_row_pos.push_back(m_table_last_pos.y);
-
-			const ImVec2 wp = ImGui::GetWindowPos();
-			const ImVec2 sp = ImGui::GetStyle().ItemSpacing;
-			const float wx = wp.x + sp.x / 2;
-			const float wy = wp.y - sp.y / 2 - ImGui::GetScrollY();
-
-			for (int i = 0; i < m_table_col_pos.size(); ++i) {
-				m_table_col_pos[i] += wx;
-			}
-
-			for (int i = 0; i < m_table_row_pos.size(); ++i) {
-				m_table_row_pos[i] += wy;
-			}
-
-			////////////////////////////////////////////////////////////////////
-
-			const ImColor c = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
-
-			ImDrawList* dl = ImGui::GetWindowDrawList();
-
-			const float xmin = m_table_col_pos.front();
-			const float xmax = m_table_col_pos.back();
-			for (int i = 0; i < m_table_row_pos.size(); ++i) {
-				const float p = m_table_row_pos[i];
-				dl->AddLine(ImVec2(xmin, p), ImVec2(xmax, p), c, 
-					i == 1 && m_table_header_highlight ? 2.0f : 1.0f);
-			}
-
-			const float ymin = m_table_row_pos.front();
-			const float ymax = m_table_row_pos.back();
-			for (int i = 0; i < m_table_col_pos.size(); ++i) {
-				const float p = m_table_col_pos[i];
-				dl->AddLine(ImVec2(p, ymin), ImVec2(p, ymax), c, 1.0f);
-			}
-		}
+	if (e)
+	{
+		m_tableCount++;
+		char name[8];
+		ImFormatString(name, sizeof(name), "t%d", m_tableCount);
+		const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX;
+		m_table_is_open.push_back(ImGui::BeginTable(name, pDetails->col_count, flags));
 	}
+	else
+	{
+		if (m_table_is_open.back())
+			ImGui::EndTable();
 
-
+		m_table_is_open.pop_back();
+	}
 }
 
 void imgui_md::BLOCK_THEAD(bool e)
@@ -233,51 +204,20 @@ void imgui_md::BLOCK_TBODY(bool e)
 
 void imgui_md::BLOCK_TR(bool e)
 {
-	ImGui::SetCursorPosY(m_table_last_pos.y);
 
-	if (e) {
-		m_table_next_column = 0;
-		ImGui::NewLine();
-		m_table_row_pos.push_back(ImGui::GetCursorPosY());
-	}
 }
 
 void imgui_md::BLOCK_TH(const MD_BLOCK_TD_DETAIL* d, bool e)
 {
 	BLOCK_TD(d, e);
-
 }
 
 void imgui_md::BLOCK_TD(const MD_BLOCK_TD_DETAIL*, bool e)
 {
-	if (e) {
-
-		if (m_table_next_column < m_table_col_pos.size()) {
-			ImGui::SetCursorPosX(m_table_col_pos[m_table_next_column]);
-		} else {
-			m_table_col_pos.push_back(m_table_last_pos.x);
-		}
-
-		++m_table_next_column;
-
-		ImGui::Indent(m_table_col_pos[m_table_next_column - 1]);
-		ImGui::SetCursorPos(
-			ImVec2(m_table_col_pos[m_table_next_column - 1], m_table_row_pos.back()));
-
-	} else {
-		const ImVec2 p = ImGui::GetCursorPos();
-		ImGui::Unindent(m_table_col_pos[m_table_next_column - 1]);
-		ImGui::SetCursorPosX(p.x);
-		if (p.y > m_table_last_pos.y)m_table_last_pos.y = p.y;
+	if (e)
+	{
+		ImGui::TableNextColumn();
 	}
-	ImGui::TextUnformatted(""); 
-	
-	if (!m_table_border && e && m_table_next_column==1 ) {
-		ImGui::SameLine(0.0f, 0.0f);
-	} else {
-		ImGui::SameLine();
-	}
-	
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -427,8 +367,7 @@ void imgui_md::render_text(const char* str, const char* str_end)
 			float wl = ImGui::GetContentRegionAvail().x;
 
 			if (m_is_table_body) {
-				wl = (m_table_next_column < m_table_col_pos.size() ?
-					m_table_col_pos[m_table_next_column] : m_table_last_pos.x);
+				wl = m_table_last_pos.x;
 				wl -= ImGui::GetCursorPosX();
 			}
 
@@ -450,6 +389,7 @@ void imgui_md::render_text(const char* str, const char* str_end)
 			ImVec4 c;
 			if (ImGui::IsItemHovered()) {
 
+				ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 				ImGui::SetTooltip("%s", m_href.c_str());
 
 				c = s.Colors[ImGuiCol_ButtonHovered];
@@ -696,7 +636,7 @@ int imgui_md::block(MD_BLOCKTYPE type, void* d, bool e)
 		BLOCK_TD((MD_BLOCK_TD_DETAIL*)d, e);
 		break;
 	default:
-		assert(false);
+		IM_ASSERT(false);
 		break;
 	}
 
@@ -738,7 +678,7 @@ int imgui_md::span(MD_SPANTYPE type, void* d, bool e)
 		SPAN_U(e);
 		break;
 	default:
-		assert(false);
+		IM_ASSERT(false);
 		break;
 	}
 
@@ -748,6 +688,7 @@ int imgui_md::span(MD_SPANTYPE type, void* d, bool e)
 int imgui_md::print(const char* str, const char* str_end)
 {
 	if (str >= str_end)return 0;
+	m_tableCount = 0;
 	return md_parse(str, (MD_SIZE)(str_end - str), &m_md, this);
 }
 
