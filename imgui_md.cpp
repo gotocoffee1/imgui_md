@@ -156,9 +156,21 @@ void imgui_md::BLOCK_QUOTE(bool)
 {
 
 }
-void imgui_md::BLOCK_CODE(const MD_BLOCK_CODE_DETAIL*, bool e)
+void imgui_md::BLOCK_CODE(const MD_BLOCK_CODE_DETAIL* detail, bool e)
 {
 	m_is_code = e;
+	m_is_code_block = e;
+
+	if (m_is_code_block)
+		m_code_block = "";
+	else
+		render_code_block();
+
+	if (detail->lang.text == NULL)
+		m_code_block_language = "";
+	else
+		m_code_block_language = std::string(detail->lang.text, detail->lang.size);
+
 }
 
 void imgui_md::BLOCK_HTML(bool)
@@ -230,6 +242,16 @@ void imgui_md::set_href(bool e, const MD_ATTRIBUTE& src)
 	}
 }
 
+void imgui_md::set_img_src(bool e, const MD_ATTRIBUTE& src)
+{
+	if (e) {
+		m_img_src.assign(src.text, src.size);
+	} else {
+		m_img_src.clear();
+	}
+}
+
+
 void imgui_md::set_font(bool e)
 {
 	if (e) {
@@ -259,7 +281,8 @@ void imgui_md::line(ImColor c, bool under)
 
 	mi.y = ma.y;
 
-	ImGui::GetWindowDrawList()->AddLine(mi, ma, c, 1.0f);
+	float lineThickness = ImGui::GetFontSize() / 14.5f;
+	ImGui::GetWindowDrawList()->AddLine(mi, ma, c, lineThickness);
 }
 
 void imgui_md::SPAN_A(const MD_SPAN_A_DETAIL* d, bool e)
@@ -286,7 +309,7 @@ void imgui_md::SPAN_IMG(const MD_SPAN_IMG_DETAIL* d, bool e)
 {
 	m_is_image = e;
 
-	set_href(e, d->src);
+	set_img_src(e, d->src);
 
 	if (e) {
 
@@ -307,11 +330,11 @@ void imgui_md::SPAN_IMG(const MD_SPAN_IMG_DETAIL* d, bool e)
 
 			ImGui::Image(nfo.texture_id, nfo.size, nfo.uv0, nfo.uv1, nfo.col_tint, nfo.col_border);
 
-			if (ImGui::IsItemHovered()) {
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
 
-				//if (d->title.size) {
-				//	ImGui::SetTooltip("%.*s", (int)d->title.size, d->title.text);
-				//}
+				if (d->title.size) {
+					ImGui::SetTooltip("%.*s", (int)d->title.size, d->title.text);
+				}
 
 				if (ImGui::IsMouseReleased(0)) {
 					open_url();
@@ -390,7 +413,6 @@ void imgui_md::render_text(const char* str, const char* str_end)
 			if (ImGui::IsItemHovered()) {
 
 				ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-				ImGui::SetTooltip("%s", m_href.c_str());
 
 				c = s.Colors[ImGuiCol_ButtonHovered];
 				if (ImGui::IsMouseReleased(0)) {
@@ -399,6 +421,8 @@ void imgui_md::render_text(const char* str, const char* str_end)
 			} else {
 				c = s.Colors[ImGuiCol_Button];
 			}
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+				ImGui::SetTooltip("%s", m_href.c_str());
 			line(c, true);
 		}
 		if (m_is_underline) {
@@ -537,9 +561,47 @@ void imgui_md::html_div(const std::string& dclass, bool e)
 		}
 	}
 #endif
-	dclass; e;
+	(void)dclass; (void)e;
 }
 
+void imgui_md::render_code_block()
+{
+	m_is_code = true;
+	push_code_style();
+
+	const char* begin = m_code_block.data();
+	const char *end = m_code_block.data() + m_code_block.size();
+	render_text(begin, end);
+
+	pop_code_style();
+	m_is_code = false;
+}
+
+void imgui_md::push_code_style()
+{
+	ImGui::PushFont(get_font());
+
+	// Make code a little more blue
+	auto color = ImGui::GetStyle().Colors[ImGuiCol_Text];
+	color.z *= 1.15f;
+	ImGui::PushStyleColor(ImGuiCol_Text, color);
+
+}
+void imgui_md::pop_code_style()
+{
+	ImGui::PopStyleColor();
+	ImGui::PopFont();
+}
+
+
+void imgui_md::render_inline_code(const char *str, const char *str_end)
+{
+	m_is_code = true;
+	push_code_style();
+	render_text(str, str_end);
+	pop_code_style();
+	m_is_code = false;
+}
 
 int imgui_md::text(MD_TEXTTYPE type, const char* str, const char* str_end)
 {
@@ -548,7 +610,10 @@ int imgui_md::text(MD_TEXTTYPE type, const char* str, const char* str_end)
 		render_text(str, str_end);
 		break;
 	case MD_TEXT_CODE:
-		render_text(str, str_end);
+		if (m_is_code_block)
+			m_code_block += std::string(str, str_end);
+		else
+			render_inline_code(str, str_end);
 		break;
 	case MD_TEXT_NULLCHAR:
 		break;
@@ -689,6 +754,8 @@ int imgui_md::print(const char* str, const char* str_end)
 {
 	if (str >= str_end)return 0;
 	m_tableCount = 0;
+	// Markdown rendering always start with a call to ImGui::NewLine()
+	ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetFontSize() - ImGui::GetStyle().FramePadding.y);
 	return md_parse(str, (MD_SIZE)(str_end - str), &m_md, this);
 }
 
@@ -717,10 +784,30 @@ ImFont* imgui_md::get_font() const
 
 };
 
+ImVec4 LinkColor()
+{
+	auto col_text = ImGui::GetStyle().Colors[ImGuiCol_Text];
+
+	float h, s, v;
+	ImGui::ColorConvertRGBtoHSV(col_text.x, col_text.y, col_text.z, h, s, v);
+	h = 0.57f;
+	if (v >= 0.8f)
+		v = 0.8f;
+	if (v <= 0.5f)
+		v = 0.5f;
+	if (s <= 0.5f)
+		s = 0.5f;
+
+	ImGui::ColorConvertHSVtoRGB(h, s, v, col_text.x, col_text.y, col_text.z);
+	return col_text;
+}
+
+
 ImVec4 imgui_md::get_color() const
 {
-	if (!m_href.empty()) {
-		return ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered];
+	if (!m_href.empty())
+	{
+		return LinkColor();
 	}
 	return  ImGui::GetStyle().Colors[ImGuiCol_Text];
 }
